@@ -405,6 +405,9 @@ app.get("/api/public/veterinarios", verificarToken, async (req, res) => {
 // =====================================
 // 🔥 INICIAR SERVIDOR
 // =====================================
-app.listen(4000, () =>
-  console.log("Servidor backend corriendo en http://localhost:4000")
-);
+const PORT = process.env.PORT || 3000;
+
+app.listen(PORT, () => {
+  console.log(`Servidor backend corriendo en el puerto ${PORT}`);
+});
+
