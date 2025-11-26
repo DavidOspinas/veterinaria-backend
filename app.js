@@ -9,6 +9,12 @@ import { verificarToken, verificarRol } from "./middlewareAuth.js";
 
 dotenv.config();
 
+console.log("VARIABLES LEÍDAS:");
+console.log("DB_HOST:", process.env.DB_HOST);
+console.log("JWT_SECRET:", process.env.JWT_SECRET);
+console.log("GOOGLE_CLIENT_ID:", process.env.GOOGLE_CLIENT_ID);
+
+
 // =====================================
 // 🔥 GENERAR TOKEN JWT
 // =====================================
