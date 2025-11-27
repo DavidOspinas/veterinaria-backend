@@ -9,12 +9,6 @@ import { verificarToken, verificarRol } from "./middlewareAuth.js";
 
 dotenv.config();
 
-console.log("VARIABLES LEÍDAS:");
-console.log("DB_HOST:", process.env.DB_HOST);
-console.log("JWT_SECRET:", process.env.JWT_SECRET);
-console.log("GOOGLE_CLIENT_ID:", process.env.GOOGLE_CLIENT_ID);
-
-
 // =====================================
 // 🔥 GENERAR TOKEN JWT
 // =====================================
@@ -30,18 +24,10 @@ function generarToken(user) {
 }
 
 // =====================================
-// 🔥 CONFIG SERVIDOR
+// 🔥 CONFIG
 // =====================================
 const app = express();
-
-app.use(
-  cors({
-    origin: "*", // <-- Permite llamadas desde Netlify
-    methods: "GET,POST,PUT,DELETE",
-    allowedHeaders: "Content-Type, Authorization",
-  })
-);
-
+app.use(cors());
 app.use(express.json());
 
 // =====================================
@@ -125,21 +111,16 @@ app.post("/api/auth/register", async (req, res) => {
 });
 
 // =====================================
-// 🔥 LOGIN GOOGLE — AHORA FUNCIONA
+// 🔥 LOGIN GOOGLE
 // =====================================
 const client = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
 
 app.post("/api/auth/google", async (req, res) => {
   try {
-    // Google a veces envía 'credential' y otras 'id_token'
-    const tokenGoogle = req.body.credential || req.body.id_token;
-
-    if (!tokenGoogle) {
-      return res.status(400).json({ ok: false, msg: "Falta token de Google" });
-    }
+    const { credential } = req.body;
 
     const ticket = await client.verifyIdToken({
-      idToken: tokenGoogle,
+      idToken: credential,
       audience: process.env.GOOGLE_CLIENT_ID,
     });
 
@@ -182,17 +163,244 @@ app.post("/api/auth/google", async (req, res) => {
 
     res.json({ ok: true, user, token, rol: "CLIENTE" });
   } catch (err) {
-    console.error("ERROR GOOGLE:", err.message);
-    res.status(401).json({ ok: false, msg: "Token inválido o expirado" });
+    console.error(err);
+    res.status(401).json({ ok: false, msg: "Token inválido" });
+  }
+});
+
+
+// ==============================
+// 🔥 LISTAR USUARIOS (ADMIN)
+// ==============================
+app.get("/api/usuarios", verificarToken, verificarRol("ADMIN"), async (req, res) => {
+  try {
+    const [rows] = await db.query(
+      "SELECT id, nombre, email FROM usuarios ORDER BY id DESC"
+    );
+
+    res.json({ ok: true, usuarios: rows });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ ok: false, msg: "Error al obtener usuarios" });
+  }
+});
+
+
+// =====================================
+// 🔥 ADMIN – CRUD VETERINARIOS
+// =====================================
+app.post("/api/veterinarios", verificarToken, verificarRol("ADMIN"), async (req, res) => {
+  try {
+    const { usuario_id, especialidad, telefono } = req.body;
+
+    const [user] = await db.query(
+      "SELECT nombre, email FROM usuarios WHERE id = ?",
+      [usuario_id]
+    );
+
+    if (user.length === 0)
+      return res.json({ ok: false, msg: "Usuario no encontrado" });
+
+    const { nombre, email } = user[0];
+
+    const [result] = await db.query(
+      "INSERT INTO veterinarios (usuario_id, nombre, email, especialidad, telefono) VALUES (?, ?, ?, ?, ?)",
+      [usuario_id, nombre, email, especialidad, telefono]
+    );
+
+    res.json({ ok: true, id: result.insertId });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ ok: false, msg: "Error al crear veterinario" });
+  }
+});
+
+app.get("/api/veterinarios", verificarToken, verificarRol("ADMIN"), async (req, res) => {
+  const [rows] = await db.query("SELECT * FROM veterinarios");
+  res.json({ ok: true, veterinarios: rows });
+});
+
+// 🔥 contar citas de un veterinario
+app.get("/api/veterinarios/:id/citas-count", verificarToken, verificarRol("ADMIN"), async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const [rows] = await db.query(
+      "SELECT COUNT(*) AS total FROM citas WHERE veterinario_id = ?",
+      [id]
+    );
+
+    res.json({ ok: true, total: rows[0].total });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ ok: false, msg: "Error obteniendo cantidad de citas" });
   }
 });
 
 // =====================================
-// 🔥 RESTO DE ENDPOINTS (NO LOS MODIFIQUÉ)
+// 🔥 ADMIN – CRUD MASCOTAS
 // =====================================
-// ... (todo tu código de CRUD mascotas, citas, veterinarios)
-// No lo borro, no lo rompo.
+app.post("/api/mascotas", verificarToken, verificarRol("ADMIN"), async (req, res) => {
+  try {
+    const { usuario_id, nombre, especie, raza, edad, peso } = req.body;
 
+    const [result] = await db.query(
+      "INSERT INTO mascotas (usuario_id, nombre, especie, raza, edad, peso) VALUES (?, ?, ?, ?, ?, ?)",
+      [usuario_id, nombre, especie, raza, edad, peso]
+    );
+
+    res.json({ ok: true, id: result.insertId });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ ok: false, msg: "Error al crear mascota" });
+  }
+});
+
+app.get("/api/mascotas", verificarToken, verificarRol("ADMIN"), async (req, res) => {
+  const [rows] = await db.query(`
+    SELECT m.*, u.nombre AS dueño
+    FROM mascotas m
+    JOIN usuarios u ON m.usuario_id = u.id
+    ORDER BY m.id DESC
+  `);
+
+  res.json({ ok: true, mascotas: rows });
+});
+
+// =====================================
+// 🔥 CLIENTE — MASCOTAS
+// =====================================
+app.get("/api/cliente/mascotas/:usuario_id", verificarToken, async (req, res) => {
+  try {
+    const { usuario_id } = req.params;
+
+    const [rows] = await db.query(
+      "SELECT * FROM mascotas WHERE usuario_id = ? ORDER BY creado_en DESC",
+      [usuario_id]
+    );
+
+    res.json({ ok: true, mascotas: rows });
+  } catch (err) {
+    console.error("Error cargando mascotas cliente:", err);
+    res.status(500).json({ ok: false, msg: "Error al obtener mascotas" });
+  }
+});
+
+// =====================================
+// 🔥 CLIENTE — CREAR MASCOTA
+// =====================================
+app.post("/api/cliente/mascotas", verificarToken, async (req, res) => {
+  try {
+    const { usuario_id, nombre, especie, raza, edad, peso } = req.body;
+
+    const [result] = await db.query(
+      `INSERT INTO mascotas (usuario_id, nombre, especie, raza, edad, peso)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      [usuario_id, nombre, especie, raza, edad, peso]
+    );
+
+    res.json({ ok: true, msg: "Mascota registrada", id: result.insertId });
+
+  } catch (err) {
+    console.error("Error creando mascota cliente:", err);
+    res.status(500).json({ ok: false, msg: "Error al crear mascota" });
+  }
+});
+
+// =====================================
+// 🔥 CLIENTE — CITAS
+// =====================================
+app.get("/api/cliente/citas/:usuario_id", verificarToken, async (req, res) => {
+  try {
+    const { usuario_id } = req.params;
+
+    const [rows] = await db.query(
+      `SELECT c.*, m.nombre AS mascota, v.nombre AS veterinario
+       FROM citas c
+       JOIN mascotas m ON m.id = c.mascota_id
+       JOIN veterinarios v ON v.id = c.veterinario_id
+       WHERE m.usuario_id = ?
+       ORDER BY c.fecha DESC`,
+      [usuario_id]
+    );
+
+    res.json({ ok: true, citas: rows });
+  } catch (err) {
+    console.error("Error cargando citas cliente:", err);
+    res.status(500).json({ ok: false, msg: "Error al obtener citas" });
+  }
+});
+
+// =====================================
+// 🔥 CLIENTE — CREAR CITA
+// =====================================
+app.post("/api/cliente/citas", verificarToken, async (req, res) => {
+  try {
+    const { mascota_id, veterinario_id, fecha, motivo } = req.body;
+
+    if (!mascota_id || !veterinario_id || !fecha || !motivo) {
+      return res.json({ ok: false, msg: "Faltan datos para crear la cita" });
+    }
+
+    const [result] = await db.query(
+      "INSERT INTO citas (mascota_id, veterinario_id, fecha, motivo, estado) VALUES (?, ?, ?, ?, 'PENDIENTE')",
+      [mascota_id, veterinario_id, fecha, motivo]
+    );
+
+    res.json({
+      ok: true,
+      msg: "Cita creada correctamente",
+      id: result.insertId
+    });
+
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ ok: false, msg: "Error al crear cita" });
+  }
+});
+
+// =====================================
+// 🔥 ADMIN — CITAS
+// =====================================
+app.get("/api/citas", verificarToken, verificarRol("ADMIN"), async (req, res) => {
+  try {
+    const [rows] = await db.query(`
+      SELECT c.id, m.nombre AS mascota, v.nombre AS veterinario, c.fecha, c.motivo
+      FROM citas c
+      JOIN mascotas m ON c.mascota_id = m.id
+      JOIN veterinarios v ON c.veterinario_id = v.id
+      ORDER BY c.id DESC
+    `);
+
+    res.json({ ok: true, citas: rows });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ ok: false, msg: "Error al obtener citas" });
+  }
+});
+
+app.delete("/api/citas/:id", verificarToken, verificarRol("ADMIN"), async (req, res) => {
+  const { id } = req.params;
+  await db.query("DELETE FROM citas WHERE id = ?", [id]);
+  res.json({ ok: true, msg: "Cita eliminada" });
+});
+
+// =====================================
+// 🔥 VETERINARIOS PUBLICOS (CLIENTE)
+// =====================================
+app.get("/api/public/veterinarios", verificarToken, async (req, res) => {
+  try {
+    const [rows] = await db.query(
+      "SELECT id, nombre, especialidad FROM veterinarios"
+    );
+
+    res.json({ ok: true, veterinarios: rows });
+
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ ok: false, msg: "Error al obtener veterinarios" });
+  }
+});
 
 // =====================================
 // 🔥 INICIAR SERVIDOR
